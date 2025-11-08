@@ -1,111 +1,101 @@
-/* src/shell.c */
-#include "../include/shell.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <readline/readline.h>
-#include <readline/history.h>
-#include <ctype.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include "../include/shell.h"
 
-/* Initialize shell and job system */
-void init_shell(void) {
-    printf("\n*** Welcome to MyShell (multitasking enabled) ***\n");
-    printf("Type 'help' to see built-in commands.\n\n");
-    using_history();
-    init_jobs();
+#define MAX_COMMAND_LEN 1024
+
+void init_shell() {
+    printf("Welcome to MyShell v7 (with if-then-else)\n");
 }
 
-/* Read a line using readline, trim and return allocated string (caller frees) */
-char *read_command(void) {
-    char *line = readline("myshell> ");
-    if (line == NULL) return NULL; /* EOF */
-
-    /* trim leading/trailing whitespace */
-    size_t s = 0;
-    while (line[s] && isspace((unsigned char)line[s])) s++;
-    size_t e = strlen(line);
-    while (e > s && isspace((unsigned char)line[e-1])) e--;
-
-    if (s == e) {
-        free(line);
-        return strdup(""); /* empty */
-    }
-
-    size_t len = e - s;
-    char *out = malloc(len + 1);
-    if (!out) { free(line); return NULL; }
-    memcpy(out, line + s, len);
-    out[len] = '\0';
-
-    /* add non-empty to history */
-    if (len > 0) add_history(out);
-    free(line);
-    return out;
+void print_prompt() {
+    printf("myshell> ");
+    fflush(stdout);
 }
 
-/* Helper: split on semicolons into commands (modifies input), returns count */
-static int split_chained(char *line, char *cmds[], int maxcmds) {
-    int count = 0;
-    char *saveptr = NULL;
-    char *tok = strtok_r(line, ";", &saveptr);
-    while (tok && count < maxcmds) {
-        /* trim leading/trailing spaces */
-        while (*tok && isspace((unsigned char)*tok)) tok++;
-        char *end = tok + strlen(tok) - 1;
-        while (end >= tok && isspace((unsigned char)*end)) { *end = '\0'; end--; }
-        if (*tok != '\0') cmds[count++] = tok;
-        tok = strtok_r(NULL, ";", &saveptr);
-    }
-    return count;
+char *read_command() {
+    static char command[MAX_COMMAND_LEN];
+    if (!fgets(command, sizeof(command), stdin))
+        return NULL;
+    command[strcspn(command, "\n")] = '\0';
+    return command;
 }
 
-/* Main loop: splits by ';', handle background '&', reaps finished jobs */
-void shell_loop(void) {
-    char *line;
+void shell_loop() {
+    char *command;
 
     while (1) {
-        /* Reap any finished background jobs before showing prompt */
-        reap_background_jobs();
+        print_prompt();
+        command = read_command();
 
-        line = read_command();
-        if (line == NULL) { printf("\n"); break; } /* EOF */
-
-        if (line[0] == '\0') { free(line); continue; }
-
-        /* Split by semicolons */
-        char *commands[64];
-        int n = split_chained(line, commands, 64);
-
-        for (int i = 0; i < n; ++i) {
-            char *cmd = commands[i];
-
-            /* Check for trailing '&' (background) */
-            int bg = 0;
-            size_t L = strlen(cmd);
-            if (L > 0) {
-                /* skip trailing spaces */
-                size_t j = L;
-                while (j > 0 && isspace((unsigned char)cmd[j-1])) j--;
-                if (j > 0 && cmd[j-1] == '&') {
-                    bg = 1;
-                    /* remove the '&' */
-                    cmd[j-1] = '\0';
-                    /* trim trailing spaces again */
-                    size_t k = j-1;
-                    while (k > 0 && isspace((unsigned char)cmd[k-1])) { cmd[k-1] = '\0'; k--; }
-                }
-            }
-
-            /* Check for special 'exit' quick path */
-            if (strcmp(cmd, "exit") == 0) {
-                free(line);
-                return;
-            }
-
-            /* Pass the full command string to executor with bg flag */
-            execute_command(cmd, bg);
+        if (!command) {
+            printf("\n");
+            break;
         }
 
-        free(line);
+        if (strlen(command) == 0)
+            continue;
+
+        // Exit command
+        if (strcmp(command, "exit") == 0)
+            break;
+
+        // ==========================
+        // IF-THEN-ELSE-FI BLOCK
+        // ==========================
+        if (strncmp(command, "if ", 3) == 0) {
+            char if_cmd[256];
+            strcpy(if_cmd, command + 3);
+
+            char then_block[2048] = "";
+            char else_block[2048] = "";
+            int in_else = 0;
+
+            while (1) {
+                printf("... "); // continuation prompt
+                char *line = read_command();
+                if (!line) break;
+
+                if (strcmp(line, "then") == 0)
+                    continue;
+                else if (strcmp(line, "else") == 0) {
+                    in_else = 1;
+                    continue;
+                } else if (strcmp(line, "fi") == 0)
+                    break;
+
+                if (in_else)
+                    strcat(else_block, line), strcat(else_block, "\n");
+                else
+                    strcat(then_block, line), strcat(then_block, "\n");
+            }
+
+            // Execute the IF condition
+            pid_t pid = fork();
+            if (pid == 0) {
+                execlp("sh", "sh", "-c", if_cmd, NULL);
+                perror("if command failed");
+                exit(1);
+            } else {
+                int status;
+                waitpid(pid, &status, 0);
+                int exit_status = WEXITSTATUS(status);
+
+                if (exit_status == 0 && strlen(then_block) > 0)
+                    system(then_block);
+                else if (exit_status != 0 && strlen(else_block) > 0)
+                    system(else_block);
+            }
+
+            continue;
+        }
+
+        // ==========================
+        // NORMAL COMMAND EXECUTION
+        // ==========================
+        execute_command(command, 0); // FIXED: added background flag = 0
     }
 }
