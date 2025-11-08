@@ -1,12 +1,13 @@
 CC = gcc
-CFLAGS = -Iinclude
+CFLAGS = -Iinclude -Wall -Wextra -g
+LDFLAGS = -lreadline
 SRC = src/main.c src/shell.c src/execute.c
-OUT = myshell
+TARGET = myshell
 
-all: $(OUT)
+all: $(TARGET)
 
-$(OUT): $(SRC)
-	$(CC) $(CFLAGS) -o $(OUT) $(SRC)
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
 
 clean:
-	rm -f $(OUT)
+	rm -f $(TARGET)
